@@ -102,6 +102,8 @@ const WValue = union(enum) {
             .i64 => gen.free_locals_i64.append(gen.gpa, local_value) catch return,
             .f32 => gen.free_locals_f32.append(gen.gpa, local_value) catch return,
             .f64 => gen.free_locals_f64.append(gen.gpa, local_value) catch return,
+            .externref => gen.free_locals_externref.append(gen.gpa, local_value) catch return,
+            .funcref => gen.free_locals_funcref.append(gen.gpa, local_value) catch return,
         }
         value.* = WValue{ .none = {} };
     }
@@ -173,6 +175,9 @@ const Op = enum {
     promote,
     reinterpret,
     extend,
+    null,
+    is_null,
+    func,
 };
 
 /// Contains the settings needed to create an `Opcode` using `buildOpcode`.
@@ -244,18 +249,18 @@ fn buildOpcode(args: OpcodeBuildArguments) wasm.Opcode {
             8 => switch (args.valtype1.?) {
                 .i32 => if (args.signedness.? == .signed) return .i32_load8_s else return .i32_load8_u,
                 .i64 => if (args.signedness.? == .signed) return .i64_load8_s else return .i64_load8_u,
-                .f32, .f64 => unreachable,
+                else => unreachable,
             },
             16 => switch (args.valtype1.?) {
                 .i32 => if (args.signedness.? == .signed) return .i32_load16_s else return .i32_load16_u,
                 .i64 => if (args.signedness.? == .signed) return .i64_load16_s else return .i64_load16_u,
-                .f32, .f64 => unreachable,
+                else => unreachable,
             },
             32 => switch (args.valtype1.?) {
                 .i64 => if (args.signedness.? == .signed) return .i64_load32_s else return .i64_load32_u,
                 .i32 => return .i32_load,
                 .f32 => return .f32_load,
-                .f64 => unreachable,
+                else => unreachable,
             },
             64 => switch (args.valtype1.?) {
                 .i64 => return .i64_load,
@@ -268,24 +273,25 @@ fn buildOpcode(args: OpcodeBuildArguments) wasm.Opcode {
             .i64 => return .i64_load,
             .f32 => return .f32_load,
             .f64 => return .f64_load,
+            else => unreachable,
         },
         .store => if (args.width) |width| {
             switch (width) {
                 8 => switch (args.valtype1.?) {
                     .i32 => return .i32_store8,
                     .i64 => return .i64_store8,
-                    .f32, .f64 => unreachable,
+                    else => unreachable,
                 },
                 16 => switch (args.valtype1.?) {
                     .i32 => return .i32_store16,
                     .i64 => return .i64_store16,
-                    .f32, .f64 => unreachable,
+                    else => unreachable,
                 },
                 32 => switch (args.valtype1.?) {
                     .i64 => return .i64_store32,
                     .i32 => return .i32_store,
                     .f32 => return .f32_store,
-                    .f64 => unreachable,
+                    else => unreachable,
                 },
                 64 => switch (args.valtype1.?) {
                     .i64 => return .i64_store,
@@ -300,6 +306,7 @@ fn buildOpcode(args: OpcodeBuildArguments) wasm.Opcode {
                 .i64 => return .i64_store,
                 .f32 => return .f32_store,
                 .f64 => return .f64_store,
+                else => unreachable,
             }
         },
 
@@ -311,24 +318,27 @@ fn buildOpcode(args: OpcodeBuildArguments) wasm.Opcode {
             .i64 => return .i64_const,
             .f32 => return .f32_const,
             .f64 => return .f64_const,
+            else => unreachable,
         },
 
         .eqz => switch (args.valtype1.?) {
             .i32 => return .i32_eqz,
             .i64 => return .i64_eqz,
-            .f32, .f64 => unreachable,
+            else => unreachable,
         },
         .eq => switch (args.valtype1.?) {
             .i32 => return .i32_eq,
             .i64 => return .i64_eq,
             .f32 => return .f32_eq,
             .f64 => return .f64_eq,
+            else => unreachable,
         },
         .ne => switch (args.valtype1.?) {
             .i32 => return .i32_ne,
             .i64 => return .i64_ne,
             .f32 => return .f32_ne,
             .f64 => return .f64_ne,
+            else => unreachable,
         },
 
         .lt => switch (args.valtype1.?) {
@@ -336,40 +346,47 @@ fn buildOpcode(args: OpcodeBuildArguments) wasm.Opcode {
             .i64 => if (args.signedness.? == .signed) return .i64_lt_s else return .i64_lt_u,
             .f32 => return .f32_lt,
             .f64 => return .f64_lt,
+            else => unreachable,
         },
         .gt => switch (args.valtype1.?) {
             .i32 => if (args.signedness.? == .signed) return .i32_gt_s else return .i32_gt_u,
             .i64 => if (args.signedness.? == .signed) return .i64_gt_s else return .i64_gt_u,
             .f32 => return .f32_gt,
             .f64 => return .f64_gt,
+            else => unreachable,
         },
         .le => switch (args.valtype1.?) {
             .i32 => if (args.signedness.? == .signed) return .i32_le_s else return .i32_le_u,
             .i64 => if (args.signedness.? == .signed) return .i64_le_s else return .i64_le_u,
             .f32 => return .f32_le,
             .f64 => return .f64_le,
+            else => unreachable,
         },
         .ge => switch (args.valtype1.?) {
             .i32 => if (args.signedness.? == .signed) return .i32_ge_s else return .i32_ge_u,
             .i64 => if (args.signedness.? == .signed) return .i64_ge_s else return .i64_ge_u,
             .f32 => return .f32_ge,
             .f64 => return .f64_ge,
+            else => unreachable,
         },
 
         .clz => switch (args.valtype1.?) {
             .i32 => return .i32_clz,
             .i64 => return .i64_clz,
             .f32, .f64 => unreachable,
+            else => unreachable,
         },
         .ctz => switch (args.valtype1.?) {
             .i32 => return .i32_ctz,
             .i64 => return .i64_ctz,
             .f32, .f64 => unreachable,
+            else => unreachable,
         },
         .popcnt => switch (args.valtype1.?) {
             .i32 => return .i32_popcnt,
             .i64 => return .i64_popcnt,
             .f32, .f64 => unreachable,
+            else => unreachable,
         },
 
         .add => switch (args.valtype1.?) {
@@ -377,18 +394,21 @@ fn buildOpcode(args: OpcodeBuildArguments) wasm.Opcode {
             .i64 => return .i64_add,
             .f32 => return .f32_add,
             .f64 => return .f64_add,
+            else => unreachable,
         },
         .sub => switch (args.valtype1.?) {
             .i32 => return .i32_sub,
             .i64 => return .i64_sub,
             .f32 => return .f32_sub,
             .f64 => return .f64_sub,
+            else => unreachable,
         },
         .mul => switch (args.valtype1.?) {
             .i32 => return .i32_mul,
             .i64 => return .i64_mul,
             .f32 => return .f32_mul,
             .f64 => return .f64_mul,
+            else => unreachable,
         },
 
         .div => switch (args.valtype1.?) {
@@ -396,71 +416,84 @@ fn buildOpcode(args: OpcodeBuildArguments) wasm.Opcode {
             .i64 => if (args.signedness.? == .signed) return .i64_div_s else return .i64_div_u,
             .f32 => return .f32_div,
             .f64 => return .f64_div,
+            else => unreachable,
         },
         .rem => switch (args.valtype1.?) {
             .i32 => if (args.signedness.? == .signed) return .i32_rem_s else return .i32_rem_u,
             .i64 => if (args.signedness.? == .signed) return .i64_rem_s else return .i64_rem_u,
             .f32, .f64 => unreachable,
+            else => unreachable,
         },
 
         .@"and" => switch (args.valtype1.?) {
             .i32 => return .i32_and,
             .i64 => return .i64_and,
             .f32, .f64 => unreachable,
+            else => unreachable,
         },
         .@"or" => switch (args.valtype1.?) {
             .i32 => return .i32_or,
             .i64 => return .i64_or,
             .f32, .f64 => unreachable,
+            else => unreachable,
         },
         .xor => switch (args.valtype1.?) {
             .i32 => return .i32_xor,
             .i64 => return .i64_xor,
             .f32, .f64 => unreachable,
+            else => unreachable,
         },
 
         .shl => switch (args.valtype1.?) {
             .i32 => return .i32_shl,
             .i64 => return .i64_shl,
             .f32, .f64 => unreachable,
+            else => unreachable,
         },
         .shr => switch (args.valtype1.?) {
             .i32 => if (args.signedness.? == .signed) return .i32_shr_s else return .i32_shr_u,
             .i64 => if (args.signedness.? == .signed) return .i64_shr_s else return .i64_shr_u,
             .f32, .f64 => unreachable,
+            else => unreachable,
         },
         .rotl => switch (args.valtype1.?) {
             .i32 => return .i32_rotl,
             .i64 => return .i64_rotl,
             .f32, .f64 => unreachable,
+            else => unreachable,
         },
         .rotr => switch (args.valtype1.?) {
             .i32 => return .i32_rotr,
             .i64 => return .i64_rotr,
             .f32, .f64 => unreachable,
+            else => unreachable,
         },
 
         .abs => switch (args.valtype1.?) {
             .i32, .i64 => unreachable,
             .f32 => return .f32_abs,
             .f64 => return .f64_abs,
+            else => unreachable,
         },
         .neg => switch (args.valtype1.?) {
             .i32, .i64 => unreachable,
             .f32 => return .f32_neg,
             .f64 => return .f64_neg,
+            else => unreachable,
         },
         .ceil => switch (args.valtype1.?) {
             .i64 => unreachable,
             .i32 => return .f32_ceil, // when valtype is f16, we store it in i32.
             .f32 => return .f32_ceil,
             .f64 => return .f64_ceil,
+            else => unreachable,
         },
         .floor => switch (args.valtype1.?) {
             .i64 => unreachable,
             .i32 => return .f32_floor, // when valtype is f16, we store it in i32.
             .f32 => return .f32_floor,
             .f64 => return .f64_floor,
+            else => unreachable,
         },
         .trunc => switch (args.valtype1.?) {
             .i32 => if (args.valtype2) |valty| switch (valty) {
@@ -468,57 +501,65 @@ fn buildOpcode(args: OpcodeBuildArguments) wasm.Opcode {
                 .i64 => unreachable,
                 .f32 => if (args.signedness.? == .signed) return .i32_trunc_f32_s else return .i32_trunc_f32_u,
                 .f64 => if (args.signedness.? == .signed) return .i32_trunc_f64_s else return .i32_trunc_f64_u,
+                else => unreachable,
             } else return .f32_trunc, // when no valtype2, it's an f16 instead which is stored in an i32.
             .i64 => unreachable,
             .f32 => return .f32_trunc,
             .f64 => return .f64_trunc,
+            else => unreachable,
         },
         .nearest => switch (args.valtype1.?) {
             .i32, .i64 => unreachable,
             .f32 => return .f32_nearest,
             .f64 => return .f64_nearest,
+            else => unreachable,
         },
         .sqrt => switch (args.valtype1.?) {
             .i32, .i64 => unreachable,
             .f32 => return .f32_sqrt,
             .f64 => return .f64_sqrt,
+            else => unreachable,
         },
         .min => switch (args.valtype1.?) {
             .i32, .i64 => unreachable,
             .f32 => return .f32_min,
             .f64 => return .f64_min,
+            else => unreachable,
         },
         .max => switch (args.valtype1.?) {
             .i32, .i64 => unreachable,
             .f32 => return .f32_max,
             .f64 => return .f64_max,
+            else => unreachable,
         },
         .copysign => switch (args.valtype1.?) {
             .i32, .i64 => unreachable,
             .f32 => return .f32_copysign,
             .f64 => return .f64_copysign,
+            else => unreachable,
         },
 
         .wrap => switch (args.valtype1.?) {
             .i32 => switch (args.valtype2.?) {
                 .i32 => unreachable,
                 .i64 => return .i32_wrap_i64,
-                .f32, .f64 => unreachable,
+                else => unreachable,
             },
-            .i64, .f32, .f64 => unreachable,
+            else => unreachable,
         },
         .convert => switch (args.valtype1.?) {
             .i32, .i64 => unreachable,
             .f32 => switch (args.valtype2.?) {
                 .i32 => if (args.signedness.? == .signed) return .f32_convert_i32_s else return .f32_convert_i32_u,
                 .i64 => if (args.signedness.? == .signed) return .f32_convert_i64_s else return .f32_convert_i64_u,
-                .f32, .f64 => unreachable,
+                else => unreachable,
             },
             .f64 => switch (args.valtype2.?) {
                 .i32 => if (args.signedness.? == .signed) return .f64_convert_i32_s else return .f64_convert_i32_u,
                 .i64 => if (args.signedness.? == .signed) return .f64_convert_i64_s else return .f64_convert_i64_u,
-                .f32, .f64 => unreachable,
+                else => unreachable,
             },
+            else => unreachable,
         },
         .demote => if (args.valtype1.? == .f32 and args.valtype2.? == .f64) return .f32_demote_f64 else unreachable,
         .promote => if (args.valtype1.? == .f64 and args.valtype2.? == .f32) return .f64_promote_f32 else unreachable,
@@ -527,6 +568,7 @@ fn buildOpcode(args: OpcodeBuildArguments) wasm.Opcode {
             .i64 => if (args.valtype2.? == .f64) return .i64_reinterpret_f64 else unreachable,
             .f32 => if (args.valtype2.? == .i32) return .f32_reinterpret_i32 else unreachable,
             .f64 => if (args.valtype2.? == .i64) return .f64_reinterpret_i64 else unreachable,
+            else => unreachable,
         },
         .extend => switch (args.valtype1.?) {
             .i32 => switch (args.width.?) {
@@ -540,8 +582,14 @@ fn buildOpcode(args: OpcodeBuildArguments) wasm.Opcode {
                 32 => if (args.signedness.? == .signed) return .i64_extend32_s else unreachable,
                 else => unreachable,
             },
-            .f32, .f64 => unreachable,
+            else => unreachable,
         },
+        .null => return .ref_null,
+        .is_null => switch (args.valtype1.?) {
+            .externref, .funcref => return .ref_is_null,
+            else => unreachable,
+        },
+        .func => return .ref_func,
     }
 }
 
@@ -649,6 +697,12 @@ free_locals_f32: std.ArrayListUnmanaged(u32) = .{},
 /// A list of indexes which represents a local of valtype `f64`.
 /// It is illegal to store a non-i32 valtype in this list.
 free_locals_f64: std.ArrayListUnmanaged(u32) = .{},
+/// A list of indexes which represents a local of valtype `externref`.
+/// It is illegal to store a non-i32 valtype in this list.
+free_locals_externref: std.ArrayListUnmanaged(u32) = .{},
+/// A list of indexes which represents a local of valtype `funcref`.
+/// It is illegal to store a non-i32 valtype in this list.
+free_locals_funcref: std.ArrayListUnmanaged(u32) = .{},
 
 const InnerError = error{
     OutOfMemory,
@@ -670,6 +724,8 @@ pub fn deinit(self: *Self) void {
     self.free_locals_i64.deinit(self.gpa);
     self.free_locals_f32.deinit(self.gpa);
     self.free_locals_f64.deinit(self.gpa);
+    self.free_locals_externref.deinit(self.gpa);
+    self.free_locals_funcref.deinit(self.gpa);
     self.* = undefined;
 }
 
@@ -790,6 +846,11 @@ fn typeToValtype(ty: Type, target: std.Target) wasm.Valtype {
             if (info.bits > 32 and info.bits <= 128) break :blk wasm.Valtype.i64;
             break :blk wasm.Valtype.i32; // represented as pointer to stack
         },
+        .Pointer => if (ty.ptrAddressSpace() == .host) switch (ty.childType().zigTypeTag()) {
+            .Opaque => wasm.Valtype.externref,
+            .Fn => wasm.Valtype.funcref,
+            else => unreachable,
+        } else wasm.Valtype.i32,
         else => wasm.Valtype.i32, // all represented as reference/immediate
     };
 }
@@ -846,6 +907,12 @@ fn allocLocal(self: *Self, ty: Type) InnerError!WValue {
             return WValue{ .local = index };
         },
         .f64 => if (self.free_locals_f64.popOrNull()) |index| {
+            return WValue{ .local = index };
+        },
+        .externref => if (self.free_locals_externref.popOrNull()) |index| {
+            return WValue{ .local = index };
+        },
+        .funcref => if (self.free_locals_funcref.popOrNull()) |index| {
             return WValue{ .local = index };
         },
     }

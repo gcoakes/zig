@@ -240,6 +240,8 @@ pub const PrefixedOpcode = enum(u8) {
 /// Enum representing all Wasm value types as per spec:
 /// https://webassembly.github.io/spec/core/binary/types.html
 pub const Valtype = enum(u8) {
+    externref = 0x6F,
+    funcref = 0x70,
     i32 = 0x7F,
     i64 = 0x7E,
     f32 = 0x7D,
