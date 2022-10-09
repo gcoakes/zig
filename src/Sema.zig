@@ -30162,6 +30162,7 @@ pub fn analyzeAddrspace(
         // TODO: check that .shared and .local are left uninitialized
         .global, .param, .shared, .local => is_gpu,
         .constant => is_gpu and (ctx == .constant),
+        .host => arch == .wasm32 or arch == .wasm64,
     };
 
     if (!supported) {

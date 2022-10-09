@@ -166,6 +166,8 @@ pub const AddressSpace = enum {
     gs,
     fs,
     ss,
+    // WASM address spaces
+    host,
     // GPU address spaces
     global,
     constant,
