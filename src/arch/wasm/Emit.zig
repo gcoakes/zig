@@ -51,6 +51,10 @@ pub fn emitMir(emit: *Emit) InnerError!void {
             .block => try emit.emitBlock(tag, inst),
             .loop => try emit.emitBlock(tag, inst),
 
+            // ref instructions
+            .ref_null => try emit.emitRefNull(inst),
+            .ref_is_null => try emit.emitTag(tag),
+
             .dbg_line => try emit.emitDbgLine(inst),
             .dbg_epilogue_begin => try emit.emitDbgEpilogueBegin(),
             .dbg_prologue_end => try emit.emitDbgPrologueEnd(),
@@ -67,6 +71,7 @@ pub fn emitMir(emit: *Emit) InnerError!void {
             .global_set => try emit.emitGlobal(tag, inst),
             .function_index => try emit.emitFunctionIndex(inst),
             .memory_address => try emit.emitMemAddress(inst),
+            .ref_func => try emit.emitRefFunc(inst),
 
             // immediates
             .f32_const => try emit.emitFloat32(inst),
@@ -276,6 +281,12 @@ fn emitBlock(emit: *Emit, tag: Mir.Inst.Tag, inst: Mir.Inst.Index) !void {
     try emit.code.append(block_type);
 }
 
+fn emitRefNull(emit: *Emit, inst: Mir.Inst.Index) !void {
+    const ref_type = emit.mir.instructions.items(.data)[inst].ref_type;
+    try emit.code.append(std.wasm.opcode(.ref_null));
+    try emit.code.append(ref_type);
+}
+
 fn emitBrTable(emit: *Emit, inst: Mir.Inst.Index) !void {
     const extra_index = emit.mir.instructions.items(.data)[inst].payload;
     const extra = emit.mir.extraData(Mir.JumpTable, extra_index);
@@ -414,6 +425,23 @@ fn emitMemAddress(emit: *Emit, inst: Mir.Inst.Index) !void {
             .index = mem.pointer,
             .relocation_type = if (is_wasm32) .R_WASM_MEMORY_ADDR_LEB else .R_WASM_MEMORY_ADDR_LEB64,
             .addend = @intCast(i32, mem.offset),
+        });
+    }
+}
+
+fn emitRefFunc(emit: *Emit, inst: Mir.Inst.Index) !void {
+    const label = emit.mir.instructions.items(.data)[inst].label;
+    try emit.code.append(std.wasm.opcode(.ref_func));
+    const funcref_offset = emit.offset();
+    var buf: [5]u8 = undefined;
+    leb128.writeUnsignedFixed(5, &buf, label);
+    try emit.code.appendSlice(&buf);
+
+    if (label != 0) {
+        try emit.decl.link.wasm.relocs.append(emit.bin_file.allocator, .{
+            .offset = funcref_offset,
+            .index = label,
+            .relocation_type = .R_WASM_FUNCTION_INDEX_LEB,
         });
     }
 }

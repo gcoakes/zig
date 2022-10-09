@@ -188,6 +188,9 @@ pub const Opcode = enum(u8) {
     i64_extend8_s = 0xC2,
     i64_extend16_s = 0xC3,
     i64_extend32_s = 0xC4,
+    ref_null = 0xD0,
+    ref_is_null = 0xD1,
+    ref_func = 0xD2,
     _,
 };
 

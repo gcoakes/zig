@@ -513,6 +513,12 @@ pub const Inst = struct {
         i64_extend16_s = 0xC3,
         /// Uses `tag`
         i64_extend32_s = 0xC4,
+        /// Uses `ref_type`
+        ref_null = 0xD0,
+        /// Uses `tag`
+        ref_is_null = 0xD1,
+        /// Uses `label`
+        ref_func = 0xD2,
         /// The instruction consists of an extension opcode
         /// set in `secondary`
         ///
@@ -552,6 +558,10 @@ pub const Inst = struct {
         ///
         /// Used by `block` and `loop`
         block_type: u8,
+        /// Contains the ref type.
+        ///
+        /// Used by `ref_null`
+        ref_type: u8,
         /// Contains an u32 index into a wasm section entry, such as a local.
         /// Note: This is not an index to another instruction.
         ///
