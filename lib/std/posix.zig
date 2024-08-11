@@ -7407,3 +7407,12 @@ pub fn toPosixPath(file_path: []const u8) error{NameTooLong}![PATH_MAX - 1:0]u8 
     path_with_null[file_path.len] = 0;
     return path_with_null;
 }
+
+/// Return the current process ID.
+///
+/// Asserts the returned PID is non-negative.
+pub fn getpid() pid_t {
+    const pid = system.getpid();
+    assert(pid >= 0);
+    return pid;
+}

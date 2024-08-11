@@ -1631,6 +1631,30 @@ pub fn getBaseAddress() usize {
     }
 }
 
+/// The type of a process ID.
+///
+/// This is defined such that it may represent a process ID from all supported operating
+/// systems with the same primitive type. In other words, it does not change size
+/// depending upon the build target.
+const ProcessId = u32;
+
+/// Return an integer uniquely assigned to this process.
+///
+/// Notably, this is not necessarily the the same as the process handle. It is intended
+/// for use when an external actor within the same OS needs to uniquely refer to a
+/// running process (i.e.: a "pid file").
+///
+/// On POSIX systems, it asserts the operating system is well behaved and returns a
+/// non-negative PID.
+pub fn getProcessId() ProcessId {
+    switch (native_os) {
+        .windows => return windows.GetCurrentProcessId(),
+        // Bit cast is safe here since `posix.getpid` asserts the returned PID is
+        // non-negative.
+        else => return @bitCast(posix.getpid()),
+    }
+}
+
 /// Tells whether calling the `execv` or `execve` functions will be a compile error.
 pub const can_execv = switch (native_os) {
     .windows, .haiku, .wasi => false,
