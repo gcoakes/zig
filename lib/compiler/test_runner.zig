@@ -147,6 +147,7 @@ fn mainServer() !void {
                 const index = try server.receiveBody_u32();
                 var first = true;
                 const test_fn = builtin.test_functions[index];
+                fuzzer_start_test(FuzzerSlice.fromSlice(test_fn.name));
                 while (true) {
                     testing.allocator_instance = .{};
                     defer if (testing.allocator_instance.deinit() == .leak) std.process.exit(1);
@@ -351,6 +352,7 @@ var entry_addr: usize = 0;
 
 extern fn fuzzer_next() FuzzerSlice;
 extern fn fuzzer_init(cache_dir: FuzzerSlice) void;
+extern fn fuzzer_start_test(test_fqn: FuzzerSlice) void;
 extern fn fuzzer_coverage_id() u64;
 
 pub fn fuzzInput(options: testing.FuzzInputOptions) []const u8 {

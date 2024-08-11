@@ -104,7 +104,8 @@ fn handleCmp(pc: usize, arg1: u64, arg2: u64) void {
 const Fuzzer = struct {
     gpa: Allocator,
     rng: std.Random.DefaultPrng,
-    input: std.ArrayListUnmanaged(u8),
+    input_file: std.fs.File,
+    input: MemoryMappedList,
     flagged_pcs: []const FlaggedPc,
     pc_counters: []u8,
     n_runs: usize,
@@ -117,6 +118,11 @@ const Fuzzer = struct {
     /// processes and viewed while the fuzzer is running.
     seen_pcs: MemoryMappedList,
     cache_dir: std.fs.Dir,
+    /// A directory containing a minimal set of inputs which produce unique execution paths.
+    ///
+    /// Addditionally, this contains one file per process which is actively fuzzing the
+    /// same test.
+    corpus_dir: std.fs.Dir,
     /// Identifies the file name that will be used to store coverage
     /// information, available to other processes.
     coverage_id: u64,
@@ -257,6 +263,24 @@ const Fuzzer = struct {
         }
     }
 
+    fn startTest(f: *Fuzzer, test_fqn: []const u8) !void {
+        const test_fqn_digest = std.hash.Wyhash.hash(0, test_fqn);
+        const corpus_path = "f/" ++ std.fmt.hex(test_fqn_digest);
+        // NOTE: This leaks if `startTest` is called more than once. With the current
+        // design as of writing, that will never be the case.
+        f.corpus_dir = try f.cache_dir.makeOpenPath(corpus_path, .{ .iterate = true });
+        const pid = std.process.getProcessId();
+        // TODO: Why was this used in `init` when that function is fallible? It seems odd
+        // to mix panics with errors like that when the errors are never actually
+        // recovered.
+        f.input_file = createFileBail(f.corpus_dir, &std.fmt.hex(pid), .{
+            .read = true,
+            .truncate = false,
+        });
+        try f.input_file.setEndPos(std.mem.page_size);
+        f.input = try MemoryMappedList.init(f.input_file, 0, std.mem.page_size);
+    }
+
     fn analyzeLastRun(f: *Fuzzer) Analysis {
         return .{
             .id = f.coverage.run_id_hasher.final(),
@@ -272,7 +296,7 @@ const Fuzzer = struct {
             // Prepare initial input.
             try f.recent_cases.ensureUnusedCapacity(gpa, 100);
             const len = rng.uintLessThanBiased(usize, 80);
-            try f.input.resize(gpa, len);
+            try f.input.resize(f.input_file, len);
             rng.bytes(f.input.items);
             f.recent_cases.putAssumeCapacity(.{
                 .id = 0,
@@ -383,12 +407,11 @@ const Fuzzer = struct {
     }
 
     fn mutate(f: *Fuzzer) !void {
-        const gpa = f.gpa;
         const rng = fuzzer.rng.random();
 
         if (f.input.items.len == 0) {
             const len = rng.uintLessThanBiased(usize, 80);
-            try f.input.resize(gpa, len);
+            try f.input.resize(f.input_file, len);
             rng.bytes(f.input.items);
             return;
         }
@@ -397,9 +420,9 @@ const Fuzzer = struct {
         if (index < f.input.items.len) {
             f.input.items[index] = rng.int(u8);
         } else if (index < f.input.items.len * 2) {
-            _ = f.input.orderedRemove(index - f.input.items.len);
+            f.input.orderedDiscard(index - f.input.items.len);
         } else if (index < f.input.items.len * 3) {
-            try f.input.insert(gpa, index - f.input.items.len * 2, rng.int(u8));
+            try f.input.insert(f.input_file, index - f.input.items.len * 2, rng.int(u8));
         } else {
             unreachable;
         }
@@ -432,13 +455,15 @@ var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .{};
 var fuzzer: Fuzzer = .{
     .gpa = general_purpose_allocator.allocator(),
     .rng = std.Random.DefaultPrng.init(0),
-    .input = .{},
+    .input_file = undefined,
+    .input = undefined,
     .flagged_pcs = undefined,
     .pc_counters = undefined,
     .n_runs = 0,
     .recent_cases = .{},
     .coverage = undefined,
     .cache_dir = undefined,
+    .corpus_dir = undefined,
     .seen_pcs = undefined,
     .coverage_id = undefined,
 };
@@ -448,9 +473,15 @@ export fn fuzzer_coverage_id() u64 {
     return fuzzer.coverage_id;
 }
 
+export fn fuzzer_start_test(test_fqn_struct: Fuzzer.Slice) void {
+    const test_fqn = test_fqn_struct.toZig();
+    fuzzer.startTest(test_fqn) catch |err| fatal("unable to start test: {s}", .{@errorName(err)});
+}
+
 export fn fuzzer_next() Fuzzer.Slice {
     return Fuzzer.Slice.fromZig(fuzzer.next() catch |err| switch (err) {
         error.OutOfMemory => @panic("out of memory"),
+        else => fatal("unable to get next fuzz input: {s}", .{@errorName(err)}),
     });
 }
 
@@ -477,7 +508,12 @@ pub const MemoryMappedList = struct {
     /// of this ArrayList in accordance with the respective documentation. In
     /// all cases, "invalidated" means that the memory has been passed to this
     /// allocator's resize or free function.
-    items: []align(std.mem.page_size) volatile u8,
+    // TODO: My understanding of `volatile` keyword is that it prevents the compiler from
+    // optimizing accesses to the pointer. The assumptions of those optimizations may be
+    // invalidated in the face of concurrent writes by external processes. All uses of
+    // this type within libfuzzer are exclusive writers of this slice. That makes me
+    // think volatile is not necessary here.
+    items: []align(std.mem.page_size) u8,
     /// How many bytes this list can hold without allocating additional memory.
     capacity: usize,
 
@@ -516,5 +552,66 @@ pub const MemoryMappedList = struct {
         assert(new_len <= l.capacity);
         @memset(l.items.ptr[l.items.len..new_len], value);
         l.items.len = new_len;
+    }
+
+    pub fn orderedDiscard(l: *MemoryMappedList, idx: usize) void {
+        const new_len = l.items.len - 1;
+        std.mem.copyForwards(
+            u8,
+            l.items[idx..new_len],
+            l.items[idx + 1 .. l.items.len],
+        );
+        l.items.len = new_len;
+    }
+
+    pub fn insert(l: *MemoryMappedList, file: std.fs.File, idx: usize, value: u8) !void {
+        const old_len = l.items.len;
+        try l.resize(file, l.items.len + 1);
+        std.mem.copyBackwards(
+            u8,
+            l.items[idx + 1 ..],
+            l.items[idx..old_len],
+        );
+        l.items[idx] = value;
+    }
+
+    /// Reset the array list to 0-length, invalidating all element pointers.
+    pub fn clearRetainingCapacity(l: *MemoryMappedList) void {
+        l.items.len = 0;
+    }
+
+    pub fn resize(l: *MemoryMappedList, file: std.fs.File, new_len: usize) !void {
+        try l.ensureTotalCapacity(file, new_len);
+        l.items.len = new_len;
+    }
+
+    /// Grow the backing file to fit `new_capacity`.
+    ///
+    // Contrary to `ArrayList` which uses a growth factor, this just forward aligns to
+    // the nearest page. Also contrary to `ArrayList`, this takes as a parameter the
+    // backing `std.fs.File`. This is because there are two distinct use cases being
+    // served for libfuzzer by this type: (1) a fixed size shared memory file suitable
+    // for communication between processes, and (2) a variable size shared memory file
+    // suitable for a best-effort checkpoint of the current fuzzing input. In the case of
+    // #1, the file is eagerly closed since no file based operations are necessary any
+    // longer. In the case of #2, the fuzzer retains the process handle separate from
+    // this type.
+    pub fn ensureTotalCapacity(l: *MemoryMappedList, file: std.fs.File, new_capacity: usize) !void {
+        if (l.capacity >= new_capacity) return;
+        const better_capacity = std.mem.alignForward(usize, new_capacity, std.mem.page_size);
+        try file.setEndPos(better_capacity);
+        const old_ptr = l.items.ptr;
+        const len = l.items.len;
+        std.posix.munmap(l.items);
+        const ptr = try std.posix.mmap(
+            old_ptr,
+            better_capacity,
+            std.posix.PROT.READ | std.posix.PROT.WRITE,
+            .{ .TYPE = .SHARED },
+            file.handle,
+            0,
+        );
+        l.capacity = better_capacity;
+        l.items = ptr[0..len];
     }
 };
